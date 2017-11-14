@@ -206,20 +206,17 @@ vbMstep <- function(x , respons , alpha0 ,  W0inv , nu0 , m0 , beta0)
     K <-  ncol(respons)
     NK <- apply(respons, 2, sum) # a vector of size k
     NK <- sapply(NK, function(x){max(x, 1e-300)}) ## avoids divisions by zero
-    alpha <- ## complete the code (optimal alpha): vector of size k
-    Nu <- ## complete the code (optimal nu): vector of size k
-    Beta <- ## complete the code (optimal Beta): vector of size k
+    alpha <- alpha0 - 1 + NK
+    Nu <- nu0 + NK
+    Beta <- beta0 + NK
     barx <- (t(respons) %*% x )/NK  # k*d matrix: weighted mean of each cluster 
-    M <-  ## complete the code: optimal mean parameters m_j for the mu_j's:
-        ## a k*d matrix
+    M <-  (matrix(beta0 * m0, nrow=K, ncol=d, byrow=TRUE) + barx * NK) / Beta
     d <- ncol(x)
     Winv <- array(dim=c(d,d,K))
     for( j in (1:K)){
         tildeX = t(t(x) - barx[j,])   
         Sj = 1/NK[j] * t(respons[,j] * tildeX) %*% tildeX
-        Winv[,,j] <- ## complete the code: optimal W^{-1}
-            ##(inverse of the covariance parameter for Lambda_j)
-            ## a d*d matrix
+        Winv[,,j] <- W0inv + NK[j] * Sj + (barx[j,] - m0) %*% t((barx[j,] - m0)) * (beta0 * NK[j]) / (beta0 + NK[j])
     }
 
     return(list(alpha = alpha, Winv = Winv, Nu = Nu, M= M, Beta =Beta)) 
@@ -236,7 +233,7 @@ vbEstep <- function(x, alpha, Winv, Nu, M, Beta)
     #' Beta: a k vector: current scale parameters for the Gaussian q(Mu | Lambda)
     #' returns: a n*k matrix: the responsibilities for each data point.  
 {
-    d <-  ncol(M)
+    d <- ncol(M)
     k <- length(alpha)
     N <- nrow(x)
     Eloglambda <-  # k vector
@@ -246,18 +243,17 @@ vbEstep <- function(x, alpha, Winv, Nu, M, Beta)
     Elogrho <- # k vector
         digamma(alpha) - digamma(sum(alpha))    
     Equadratic <- # k*N  matrix
-         d / Beta  + Nu * t( sapply(1:k, function(j){ ## a N * k matrix
+        d / Beta  + Nu * t( sapply(1:k, function(j){ ## a N * k matrix
             Wj <- solve(Winv[,,j])
             sapply(1:N, function(n){# a N vector
                 t(M[j,] -x[n, ]) %*% Wj %*% (M[j,] -x[n, ])})
         }))
-    logResponsT <- ## Complete the code: the transpose of
-        ## the unnormalized log-responsibility matrix, ie. a k * N matrix
+    logResponsT <- Elogrho + Eloglambda / 2 - log(2*pi) * d / 2 - Equadratic / 2
     logRespons <- t(logResponsT) ## N * k
     logRespons <- logRespons - apply(logRespons, 1, max) #' avoids numerical precision loss. 
     respons <- exp(logRespons) ##  N * k matrix
-    Z <-  apply(respons, 1 , sum ) # N vector
-    respons <-  respons / Z ##N * k matrix
+    Z <- apply(respons, 1 , sum ) # N vector
+    respons <- respons / Z ##N * k matrix
     return(respons)
 }
 
@@ -371,9 +367,11 @@ vbalgo <- function(x, k, alpha0,  W0inv, nu0, m0, beta0, tol=1e-5)
     niter <- 0
     while(continue){        
         niter <- niter+1
-        respons <- ## Complete the coe using vbEstep
+        respons <- vbEstep(x=x, alpha=current$alpha, Winv=current$Winv,
+                           Nu=current$Nu, M=current$M, Beta=current$Beta)
         if(nanDetector(respons)) {stop("NaNs detected!\n")}
-        vbOpt <- ## Complete the coe using vbMstep
+        vbOpt <- vbMstep(x=x, respons=respons, alpha0=alpha0, W0inv=W0inv,
+                         nu0=nu0, m0=m0, beta0=beta0)
         if(nanDetector(vbOpt)) {stop("NaNs detected!\n")}
         current <- vbOpt
         res$alphamat <- cbind(res$alphamat, current$alpha)
@@ -492,10 +490,9 @@ rproposal <- function( Mu, Sigma, p, ppar=list(var_Mu = 0.1,
     p <- rdirichlet(n=1, alpha = alphaProp)
     p <- sapply(p, function(x){max(x,1e-30)})
     p <- p/sum(p)
-    for(j in (1:k))
-    {
-        Mu[j,] <- ## complete the code. use function rmvn 
-        Sigma[,,j] <-  ## complete the code. use function rwishart
+    for(j in (1:k)) {
+        Mu[j,] <- rmvn(n=1, mu=Mu[j,], Sigma=ppar$var_Mu * diag(d))
+        Sigma[,,j] <- rwishart(nu=ppar$nu_Sigma, S=Sigma[,,j] / ppar$nu_Sigma)
     }
     return(list(Mu = Mu, Sigma = Sigma, p = p))
 }
@@ -510,7 +507,7 @@ MHsample <- function(x, k, nsample,
                                 W0 = diag(ncol(Mu)), nu0 = ncol(Mu)),
                      ppar = list(var_Mu = 0.1,
                                  nu_Sigma = 10,
-                                 alpha_p = 10) )
+                                 alpha_p = 10) ) {
     #' x: the data. A n*d matrix.
     #' k: the number of mixture components.
     #' nsample: number of MCMC iterations
@@ -524,7 +521,7 @@ MHsample <- function(x, k, nsample,
     #' - Sigma: a d*d*k*nsample array
     #' - lpostdens: the log posterior density (vector of size nsample)
     #' - naccept! number of accepted proposals. 
-{
+
     d <- ncol(x)
     output <- list(p = matrix(nrow=k, ncol=nsample),
                    Mu = array(dim = c(k, d, nsample)),
@@ -547,8 +544,7 @@ MHsample <- function(x, k, nsample,
                                 Sigma = proposal$Sigma, p=proposal$p) +
             dprior(Mu = proposal$Mu, Sigma = proposal$Sigma, p = proposal$p,
                    hpar = hpar)
-    
-            
+        
         llkmoveSigma <- sum(vapply(1:k, FUN = function(j){
             dwishart(Omega =proposal$Sigma[,,j], nu=ppar$nu_Sigma,
                      S = 1/ppar$nu_Sigma * current$Sigma[,,j] , log=TRUE)},
@@ -558,12 +554,12 @@ MHsample <- function(x, k, nsample,
             dwishart(Omega =current$Sigma[,,j], nu=ppar$nu_Sigma,
                      S = 1/ppar$nu_Sigma * proposal$Sigma[,,j] , log=TRUE)},
             FUN.VALUE = numeric(1)))
+        
         alphaPropmove <- sapply(ppar$alpha_p * current$p, function(x){max(x,1e-30)})
         alphaPropback <- sapply(ppar$alpha_p * proposal$p, function(x){max(x,1e-30)})
         lacceptratio <-  ## logarithm of the acceptance ratio.
-            ## Complete the code using
-            ## lproposal$lpost,  current$lpost,
-            ## ddirichlet( ... , log=TRUE), llkbackSigma and llkmovesigma. 
+            min(0, (proposal$lpost + ddirichlet(current$p, alphaPropback, log=TRUE) + llkbackSigma) - 
+                   (current$lpost + ddirichlet(proposal$p, alphaPropmove, log=TRUE) + llkmoveSigma))
 
         U <- runif(1)
         if(U < exp(lacceptratio)){
@@ -575,28 +571,30 @@ MHsample <- function(x, k, nsample,
         output$Sigma[,,,niter] <- current$Sigma
         output$lpostdens[niter] <- current$lpost            
     }
-    return(output)
     
+    return(output)
 } 
 
-cdfTrace <- function(x , sample , burnin = 0 , thin = 1)
+cdfTrace <- function(x , sample , burnin = 0 , thin = 1) {
     #' Traces the evolution of the gmcdf at point x through the MCMC iterations.
     #'  Can be used for convergence monitoring. 
     #' x: a single point (vector of size d)
     #' burnin, thin: see MHpredictive
     #' returns: a vector of length [ (nsample - burnin )/thin ]
-{
+
+    k <- nrow(sample$p)
     nsample <- ncol(sample$p)
     inds <- (burnin+1):nsample
     inds <- inds[inds%%thin==0]
     output <- vapply(inds , function(niter){
-        ## complete the code using gmcdf
-        FUN.VALUE = numeric(1))
+        gmcdf(x = x, Mu = sample$Mu[,,niter], Sigma = sample$Sigma[,,,niter], p = sample$p[,niter])
+    },FUN.VALUE = numeric(1))
+    
     return(output)
 }
 
 
-MHpredictive <- function(x , sample , burnin=0, thin=1)
+MHpredictive <- function(x , sample , burnin=0, thin=1) {
     #' posterior predictive density computed from MH output. 
     #' x: vector size d (single point)
     #' sample: output from the MCMC algorithm should contain
@@ -605,30 +603,33 @@ MHpredictive <- function(x , sample , burnin=0, thin=1)
     #'   (number of sample being discarded at the beginning of the chain).
     #' thin: thinning parameter: only 1 sample out of 'thin' will be kept
     #' returns: a single numeric value
-{
+
+    k <- nrow(sample$p)
     nsample <- ncol(sample$p)
     inds <- (burnin+1):nsample
     inds <- inds[inds%%thin==0]
     vectllk <- vapply(inds, function(niter){
-        ## complete the code
-, FUN.VALUE = numeric(1)
-  )
-      return(mean(vectllk))
+      sum(vapply(1:k, function(j) {
+        sample$p[j,niter] * dmnorm(x, sample$Mu[j,,niter], sample$Sigma[,,j,niter])
+      }, FUN.VALUE = numeric(1)))
+    }, FUN.VALUE = numeric(1))
+    
+    return(mean(vectllk))
 }
 
-MHpredictiveCdf <- function(x , sample , burnin = 0, thin = 1)
+MHpredictiveCdf <- function(x , sample , burnin = 0, thin = 1) {
     #' posterior predictive cdf computed from MH output.
     #' arguments: see MHpredictive.
     #' returns: a single numeric value. 
-{
+
+    k <- nrow(sample$p)
     nsample <- ncol(sample$p)
     inds <- (burnin+1):nsample
     inds <- inds[inds%%thin==0]
 
     vectcdf <- vapply(inds, function(niter){
-    ## complete the code 
-  }, FUN.VALUE = numeric(1)
-  )
-      return(mean(vectcdf))
+      gmcdf(x = x, Mu = sample$Mu[,,niter], Sigma = sample$Sigma[,,,niter], p = sample$p[,niter])
+    }, FUN.VALUE = numeric(1))
+    
+    return(mean(vectcdf))
 }
-

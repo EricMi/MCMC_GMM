@@ -10,15 +10,14 @@ library(mnormt)
 library(LaplacesDemon)
 library(coda)
 
-set.seed(1)
-
 #' 1. preliminaries: 
 #' simulate a gaussian mixture 
 
+set.seed(1)
 d <- 2 ## dimension
 K <- 3 ## number of mixture components
-N <- 500 ## sample size
 p <- c(3/10, 2/10, 5/10) ## weight parameter
+N <- 500 ## sample size
 NN <- rmultinom(n = 1, size = N, prob = p) ## NN: number of points in each cluster
 Mu <- rbind(c(-1,-1), c(0,1), c(1, -1)) ## centers
 Sigma <- array(dim = c(2,2,K)) ## the covariance matrices
@@ -42,6 +41,7 @@ for(j in 1:K)
 #' Plot the labelled data 
 plot(X[,1], X[,2], col=labs)
 
+
 #########################'
 #' 2. EM  
 #########################' 
@@ -49,9 +49,6 @@ plot(X[,1], X[,2], col=labs)
 #' Run EM
 Kfit <- 3 ## try with Kfit= 2,3,4,5 ...
 outputem <- emalgo(x=X,k=Kfit, tol=1e-6)
-
-#' inspect the objective function (stopping criterion)
-length(outputem$objective)
 
 #' Plot the (labelled) data 
 plot(X[,1], X[,2], col = labs, pch = 19)
@@ -75,6 +72,10 @@ for(j in 1:K){
     lines(ellips[1,], ellips[2,], col='black')
 }
 
+#' inspect the objective function (the likelihood)
+length(outputem$objective)
+plot(outputem$objective, xlab="Number of iteration", ylab="Log likelihood", type='l', col="blue", main="The value of objective function (log likelihood)")
+
 
 #########################'
 #' 3. VB
@@ -84,7 +85,7 @@ for(j in 1:K){
 #' [ xi | p ] ~ Multinomial(p)
 #' [ mu_j | Lambda_j ] ~ Normal(m0, beta0 Lambda_j^(-1))
 #' Lambda_j ~ Wishart(W0, nu0)
-#' [ X| xi=j, mu, Lambda ] ~ Normal (mu_j, Lambda_j^(-1))
+#' [ X | xi=j, mu, Lambda ] ~ Normal (mu_j, Lambda_j^(-1))
 
 
 #' hyper-parameters : to be varied 
@@ -93,6 +94,7 @@ m0 <- rep(0,2)
 beta0 <- 0.1
 W0 <- 1*diag(2)
 nu0 <- 10
+
 #' Run VB 
 #'
 seed <- 10
@@ -101,13 +103,7 @@ outputvb <- vbalgo(x=X,k=Kfit, alpha0 = alpha0, W0inv = solve(W0),
                  nu0 = nu0, m0 = m0, beta0=beta0, tol=1e-6)
 
 #' plot the lowerbound over iterations 
-plot(outputvb$lowerbound)
-
-##' show a summary of VB's output
-T <- ncol(outputvb$alphamat)
-outputvb$alphamat[,T]
-outputvb$Marray[,,T]
-
+plot(outputvb$lowerbound, type='l', col='blue', main="Lowerbound over iterations")
 
 ##' show a summary of VB's output
 T <- ncol(outputvb$alphamat)
@@ -116,13 +112,13 @@ outputvb$Marray[,,T]
 
 #' Visual summary of VB's output :
 #' posterior expectancy of each parameter
-p_vb <- ## complete the code
+p_vb <- outputvb$alphamat[,T] / sum(outputvb$alphamat[,T])
     ## (variational posterior expectancy of mixture weights)
-Mu_vb <- ## complete the code
+Mu_vb <- outputvb$Marray[,,T]
     ## (variational posterior expectancy of mixture centers)
 Sigma_vb <- array(dim=c(d,d,Kfit))
 for(j in 1:Kfit){
-    Sigma_vb[,,j] <- ## complete the code
+    Sigma_vb[,,j] <- outputvb$Winvarray[,,j,T] / outputvb$Numat[j,T]
     ## (variational posterior expectancy of mixture covariances)
 }
 
@@ -144,9 +140,8 @@ for(j in nonneg){
 }
 
 
-
 ####################################################'
-####' Metropolis-Hastings
+####' 4. Metropolis-Hastings
 ####################################################'
 #' Basic testing for the MH sampler
 Kmc <- Kfit ## try with different values
@@ -186,38 +181,41 @@ dpredmh <-  outer(X= xx, Y=yy,
             FUN = function(x,y){
                 wrapper(x = x, y = y,
                         FUN =function(u,v){
-                     ## complete the code    })
+                          MHpredictive(c(u,v), outputmh, burnin=500, thin=50)
+                        })
             })
 
 breaks <- c(seq(0.01,0.09, length.out=5),seq(0.1,0.3,length.out=5))
 nbreaks <- length(breaks)
-contour(xx,yy, z = dtrue, nlevels=nbreaks, levels = breaks)
+contour(xx,yy, z = dtrue, nlevels=nbreaks, levels = breaks, main="True density")
 contour(xx,yy, z = dpredmh,  nlevels=nbreaks, levels = breaks,
-          add=TRUE, col='red')
+          add=TRUE, col='red', main="Predictive density by Metropolis-Hastings")
+
 
 #########################'
-##' predictive Cdf's
+##' 5. predictive Cdf's
 #########################'
-
 
 Pexcess <- rep(0,10)
 Pexcess_em <- Pexcess; Pexcess_vb <- Pexcess; Pexcess_mh <- Pexcess
 thres_vect <-  seq(-3, 3, length.out=30)
 for(i in seq_along(thres_vect)){
-threshold <- rep(thres_vect[i], 2)
-Pexcess[i] <- 1 - gmcdf(x = threshold, Mu = Mu, Sigma=Sigma, p=p)
-Pexcess_em[i] <- ## complete the code:
-                 ##maximum likelihood estimator using EM output
-Pexcess_vb[i] <-  ## complete the code:
-    ## posterior predictive  estimator using VB output: 
-    ## use vbPredictiveCdf
-    
-Pexcess_mh[i] <-  ## complete the code:
-    ## posterior predictive  estimator using MH output:
-    ## use MHpredictiveCdf. 
+  threshold <- rep(thres_vect[i], 2)
+  Pexcess[i] <- 1 - gmcdf(x = threshold, Mu = Mu, Sigma=Sigma, p=p)
+  Pexcess_em[i] <- 1 - gmcdf(x = threshold, Mu = outputem$last$Mu, Sigma = outputem$last$Sigma, p = outputem$last$p)
+                   ##maximum likelihood estimator using EM output
+  Pexcess_vb[i] <- 1 - vbPredictiveCdf(x = threshold, alpha = outputvb$alphamat[,T], Beta = outputvb$Betamat[,T],
+                                    M = outputvb$Marray[,,T], Nu = outputvb$Numat[,T], Winv = outputvb$Winvarray[,,,T])
+      ## posterior predictive  estimator using VB output: 
+      ## use vbPredictiveCdf
+      
+  Pexcess_mh[i] <- 1 - MHpredictiveCdf(x = threshold, sample = outputmh, burnin = 500, thin = 50)
+      ## posterior predictive  estimator using MH output:
+      ## use MHpredictiveCdf.
+}
 
 ylim <- range(Pexcess, Pexcess_em,Pexcess_vb)
-plot(thres_vect,Pexcess, ylim = ylim)
+plot(thres_vect, Pexcess, ylim = ylim)
 lines(thres_vect, Pexcess_vb, col='red')
 lines(thres_vect, Pexcess_em, col='blue')
 lines(thres_vect, Pexcess_mh, col='green')
