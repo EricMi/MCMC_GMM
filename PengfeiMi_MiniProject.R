@@ -39,7 +39,7 @@ for(j in 1:K)
 }
 
 #' Plot the labelled data 
-plot(X[,1], X[,2], col=labs)
+plot(X[,1], X[,2], col=labs, main='Generated dataset')
 
 
 #########################'
@@ -158,12 +158,19 @@ ppar <- list(var_Mu = 0.001,
 
 set.seed(1)
 pct <- proc.time()
-outputmh <- MHsample(x=X, k=Kmc, nsample= 3000,
+outputmh <- MHsample(x=X, k=Kmc, nsample= 10000,
                     init=init, hpar=hpar, ppar=ppar)
 newpct <- proc.time()
 elapsed <- newpct - pct
 elapsed
-outputmh$naccept ## should not be ridiculously low. 
+outputmh$naccept ## should not be ridiculously low.
+
+cdf = cdfTrace(c(0,0), outputmh, 200, 20)
+
+plot(cdf)
+
+heidel.diag(mcmc(cdf))
+gelman.diag(mcmc(cdf))
 
 #' Predictive density
 xx <- seq(-2,2,length.out=20)

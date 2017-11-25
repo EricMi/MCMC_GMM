@@ -219,7 +219,7 @@ vbMstep <- function(x , respons , alpha0 ,  W0inv , nu0 , m0 , beta0)
         Winv[,,j] <- W0inv + NK[j] * Sj + (barx[j,] - m0) %*% t((barx[j,] - m0)) * (beta0 * NK[j]) / (beta0 + NK[j])
     }
 
-    return(list(alpha = alpha, Winv = Winv, Nu = Nu, M= M, Beta =Beta)) 
+    return(list(alpha = alpha, Winv = Winv, Nu = Nu, M = M, Beta = Beta)) 
 }
 
 
